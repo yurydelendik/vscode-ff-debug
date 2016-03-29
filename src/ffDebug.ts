@@ -11,7 +11,7 @@ import {basename} from 'path';
 
 
 /**
- * This interface should always match the schema found in the mock-debug extension manifest.
+ * This interface should always match the schema found in the firefox-debug extension manifest.
  */
 export interface LaunchRequestArguments {
 	/** An absolute path to the program to debug. */
@@ -20,7 +20,7 @@ export interface LaunchRequestArguments {
 	stopOnEntry?: boolean;
 }
 
-class MockDebugSession extends DebugSession {
+class FirefoxDebugSession extends DebugSession {
 
 	// we don't support multiple threads, so we can use a hardcoded ID for the default thread
 	private static THREAD_ID = 1;
@@ -89,10 +89,10 @@ class MockDebugSession extends DebugSession {
 			this.sendResponse(response);
 
 			// we stop on the first line
-			this.sendEvent(new StoppedEvent("entry", MockDebugSession.THREAD_ID));
+			this.sendEvent(new StoppedEvent("entry", FirefoxDebugSession.THREAD_ID));
 		} else {
 			// we just start to run until we hit a breakpoint or an exception
-			this.continueRequest(response, { threadId: MockDebugSession.THREAD_ID });
+			this.continueRequest(response, { threadId: FirefoxDebugSession.THREAD_ID });
 		}
 	}
 
@@ -142,7 +142,7 @@ class MockDebugSession extends DebugSession {
 		// return the default thread
 		response.body = {
 			threads: [
-				new Thread(MockDebugSession.THREAD_ID, "thread 1")
+				new Thread(FirefoxDebugSession.THREAD_ID, "thread 1")
 			]
 		};
 		this.sendResponse(response);
@@ -227,7 +227,7 @@ class MockDebugSession extends DebugSession {
 					this.sendResponse(response);
 
 					// send 'stopped' event
-					this.sendEvent(new StoppedEvent("breakpoint", MockDebugSession.THREAD_ID));
+					this.sendEvent(new StoppedEvent("breakpoint", FirefoxDebugSession.THREAD_ID));
 
 					// the following shows the use of 'breakpoint' events to update properties of a breakpoint in the UI
 					// if breakpoint is not yet verified, verify it now and send a 'breakpoint' update event
@@ -243,7 +243,7 @@ class MockDebugSession extends DebugSession {
 			if (this._sourceLines[ln].indexOf("exception") >= 0) {
 				this._currentLine = ln;
 				this.sendResponse(response);
-				this.sendEvent(new StoppedEvent("exception", MockDebugSession.THREAD_ID));
+				this.sendEvent(new StoppedEvent("exception", FirefoxDebugSession.THREAD_ID));
 				this.sendEvent(new OutputEvent(`exception in line: ${ln}\n`, 'stderr'));
 				return;
 			}
@@ -259,7 +259,7 @@ class MockDebugSession extends DebugSession {
 			if (this._sourceLines[ln].trim().length > 0) {   // find next non-empty line
 				this._currentLine = ln;
 				this.sendResponse(response);
-				this.sendEvent(new StoppedEvent("step", MockDebugSession.THREAD_ID));
+				this.sendEvent(new StoppedEvent("step", FirefoxDebugSession.THREAD_ID));
 				return;
 			}
 		}
@@ -277,4 +277,4 @@ class MockDebugSession extends DebugSession {
 	}
 }
 
-DebugSession.run(MockDebugSession);
+DebugSession.run(FirefoxDebugSession);
