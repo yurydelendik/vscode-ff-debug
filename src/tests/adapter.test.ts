@@ -12,7 +12,7 @@ import {DebugProtocol} from 'vscode-debugprotocol';
 
 suite('Node Debug Adapter', () => {
 
-	const DEBUG_ADAPTER = './out/mockDebug.js';
+	const DEBUG_ADAPTER = './out/ffDebug.js';
 
 	const PROJECT_ROOT = Path.join(__dirname, '../../');
 	const DATA_ROOT = Path.join(PROJECT_ROOT, 'src/tests/data/');
@@ -60,7 +60,7 @@ suite('Node Debug Adapter', () => {
 
 		test('should produce error for invalid \'pathFormat\'', done => {
 			dc.initializeRequest({
-				adapterID: 'mock',
+				adapterID: 'firefox',
 				linesStartAt1: true,
 				columnsStartAt1: true,
 				pathFormat: 'url'

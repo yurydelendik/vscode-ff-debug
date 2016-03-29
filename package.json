@@ -1,11 +1,11 @@
 {
-	"name": "mock-debug",
-	"displayName": "Mock Debug",
-	"version": "0.10.22",
+	"name": "firefox-debug",
+	"displayName": "Firefox Remote Debug",
+	"version": "0.1.0",
 	"publisher": "andreweinand",
 	"description": "Starter extension for developing debug adapters for VS Code.",
 	"author": {
-		"name": "Microsoft Corporation"
+		"name": "Mozilla Foundation"
 	},
 	"engines": {
 		"vscode": "^0.10.1"
@@ -17,10 +17,10 @@
 	"private": true,
 	"repository": {
 		"type": "git",
-		"url": "https://github.com/Microsoft/vscode-mock-debug.git"
+		"url": "https://github.com/yurydelendik/vscode-ff-debug.git"
 	},
 	"bugs": {
-		"url": "https://github.com/Microsoft/vscode-mock-debug/issues"
+		"url": "https://github.com/yurydelendik/vscode-ff-debug/issues"
 	},
 	"dependencies": {
 		"vscode-debugprotocol": "^1.7.0",
@@ -40,12 +40,12 @@
 	"contributes": {
 		"debuggers": [
 			{
-				"type": "mock",
-				"label": "Mock Debug",
+				"type": "firefox",
+				"label": "Firefox Remote Debug",
 
-				"enableBreakpointsFor": { "languageIds": [ "markdown" ] },
+				"enableBreakpointsFor": { "languageIds": [ "js", "html" ] },
 
-				"program": "./out/mockDebug.js",
+				"program": "./out/ffDebug.js",
 				"runtime": "node",
 
 				"configurationAttributes": {
@@ -54,13 +54,33 @@
 						"properties": {
 							"program": {
 								"type": "string",
-								"description": "Workspace relative path to a text file.",
-								"default": "readme.md"
+								"description": "Workspace relative path to a html file.",
+								"default": "$(workspaceRoot)/index.html"
 							},
 							"stopOnEntry": {
 								"type": "boolean",
 								"description": "Automatically stop after launch.",
-								"default": true
+								"default": false
+							},
+							"runtimeExecutable": {
+								"type": "string",
+								"description": "Path to Firefox executable",
+								"default": ""
+							},
+							"port": {
+								"type": "number",
+								"description": "Remote server port",
+								"default": 6000
+							},
+							"profileDir": {
+								"type": "string",
+								"description": "Temporary Firefox profile dir",
+								"default": ""
+							},
+							"logEnabled": {
+								"type": "boolean",
+								"description": "Enable protocol logging into console",
+								"default": false
 							}
 						}
 					}
@@ -68,11 +88,14 @@
 
 				"initialConfigurations": [
 					{
-						"name": "Mock-Debug",
-						"type": "mock",
+						"name": "Firefox-Debug",
+						"type": "firefox",
 						"request": "launch",
-						"program": "readme.md",
-						"stopOnEntry": true
+						"runtimeExecutable": "/Applications/FirefoxDeveloperEdition.app/Contents/MacOS/firefox",
+						"port": 6000,
+						"program": "$(workspaceRoot)/index.html",
+						"profileDir": "$(workspaceRoot)/.firefoxProfile",
+						"stopOnEntry": false
 					}
 				]
 			}

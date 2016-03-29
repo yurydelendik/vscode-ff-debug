@@ -1,41 +1,96 @@
-# VS Code Mock Debug
+# VS Code Firefox Debug
 
-This is a starter sample for developing VS Code debug adapters.
+TBD
 
-**Mock Debug** simulates a debug adapter for Visual Studio Code.
-It supports *step*, *continue*, *breakpoints*, *exceptions*, and
-*variable access* but it is not connected to any real debugger.
+## Using Firefox Debug
 
-The sample is meant as an educational piece showing how to implement a debug
-adapter for VS Code. It can be used as a starting point for developing a real adapter.
-
-More information about how to develop a new debug adapter can be found
-[here](https://code.visualstudio.com/docs/extensions/example-debuggers).
-Or discuss debug adapters on Gitter:
-[![Gitter Chat](http://img.shields.io/badge/chat-online-brightgreen.svg)](https://gitter.im/Microsoft/vscode)
-
-## Using Mock Debug
-
-* Install the **Mock Debug** extension in VS Code.
-* Create a new 'program' file `readme.md` and enter several lines of arbitrary text.
+* Install the **Firefox Debug** extension in VS Code.
+* TBD
 * Switch to the debug viewlet and press the gear dropdown.
-* Select the debug environment "Mock Debug".
+* Select the debug environment "Firefox Debug".
 * Press the green 'play' button to start debugging.
 
-You can now 'step through' the `readme.md` file, set and hit breakpoints, and run into exceptions (if the word exception appears in a line).
-
-![Mock Debug](images/mock-debug.gif)
+TBD
 
 ## Build and Run
 
-[![build status](https://travis-ci.org/Microsoft/vscode-mock-debug.svg?branch=master)](https://travis-ci.org/Microsoft/vscode-mock-debug)
-[![build status](https://ci.appveyor.com/api/projects/status/empmw5q1tk6h1fly/branch/master?svg=true)](https://ci.appveyor.com/project/weinand/vscode-mock-debug)
 
-
-* Clone the project [https://github.com/Microsoft/vscode-mock-debug.git](https://github.com/Microsoft/vscode-mock-debug.git)
+* Clone the project [https://github.com/yurydelendik/vscode-ff-debug.git](https://github.com/yurydelendik/vscode-ff-debug.git)
 * Open the project folder in VS Code.
-* Press `F5` to build and launch Mock Debug in another VS Code window. In that window:
+* Press `F5` to build and launch Firefox Debug in another VS Code window. In that window:
   * Open a new workspace, create a new 'program' file `readme.md` and enter several lines of arbitrary text.
   * Switch to the debug viewlet and press the gear dropdown.
-  * Select the debug environment "Mock Debug".
+  * Select the debug environment "Firefox Debug".
   * Press `F5` to start debugging.
+
+## Developing
+
+* Clone the project [https://github.com/yurydelendik/vscode-ff-debug.git](https://github.com/yurydelendik/vscode-ff-debug.git)
+* "npm install"
+* Compile code by running "npm run-script compile"
+* Run vscode with extension "code --extensionDevelopmentPath=`pwd`"
+
+(code is `alias code="/Applications/Visual\ Studio\ Code.app/Contents/MacOS/Electron"`)
+
+In experimental env:
+
+* Create index.html, e.g.:
+
+
+```
+<script>
+   function test() {
+     var i = 0;
+     var j = i + 1;
+     var q = j * 2;
+     var obj = {k: 12, q: q};
+     console.log(toStr(obj));
+   }
+
+   function toStr(o) {
+      var s = '' + o, t = '';
+      for (var i = 0; i < s.length; i++) {
+        t = s[i] + t;
+      }
+      debugger;
+      return t;
+   }
+
+   setInterval(test, 4000);
+</script>
+```
+
+* and .vscode/launch.json:
+
+```
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Firefox-Debug",
+      "type": "firefox",
+      "request": "launch",
+      "runtimeExecutable": "/Applications/FirefoxDeveloperEdition.app/Contents/MacOS/firefox",
+      "port": 6000,
+      "program": "${workspaceRoot}/index.html",
+      "profileDir": "${workspaceRoot}/.firefoxProfile",
+      "stopOnEntry": false
+    },
+    {
+      "name": "Firefox-Debug-HTTP",
+      "type": "firefox",
+      "request": "launch",
+      "runtimeExecutable": "/Applications/FirefoxDeveloperEdition.app/Contents/MacOS/firefox",
+      "port": 6001,
+      "program": "http://localhost:8000/index.html",
+      "webRoot": "${workspaceRoot}",
+      "profileDir": "${workspaceRoot}/.firefoxProfile",
+      "stopOnEntry": false
+    }
+   ]
+}
+```
+
+* Hit debug icon
+* Run 'Firefox-Debug'
+* Allow debugger connection (it is about 5 seconds).
