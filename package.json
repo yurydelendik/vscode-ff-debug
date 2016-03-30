@@ -61,6 +61,16 @@
 								"type": "boolean",
 								"description": "Automatically stop after launch.",
 								"default": false
+							},
+						    "runtimeExecutable": {
+							    "type": "string",
+							    "description": "Path to Firefox executable",
+							    "default": ""
+							},
+						    "port": {
+							    "type": "number",
+							    "description": "Remote server port",
+							    "default": 9223
 							}
 						}
 					}
@@ -71,6 +81,8 @@
 						"name": "Firefox-Debug",
 						"type": "firefox",
 						"request": "launch",
+					    "runtimeExecutable": "/Applications/FirefoxDeveloperEdition.app/Contents/MacOS/firefox",
+					    "port": 9988,
 						"program": "$(workspaceRoot)/index.html",
 						"stopOnEntry": false
 					}

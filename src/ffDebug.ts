@@ -9,6 +9,7 @@ import {DebugProtocol} from 'vscode-debugprotocol';
 import {readFileSync} from 'fs';
 import {basename} from 'path';
 
+import {FirefoxSession} from './ffSession';
 
 /**
  * This interface should always match the schema found in the firefox-debug extension manifest.
@@ -18,6 +19,9 @@ export interface LaunchRequestArguments {
 	program: string;
 	/** Automatically stop target after launch. If not specified, target does not stop. */
 	stopOnEntry?: boolean;
+
+	runtimeExecutable?: string;
+	port?: number;
 }
 
 class FirefoxDebugSession extends DebugSession {
@@ -50,6 +54,7 @@ class FirefoxDebugSession extends DebugSession {
 
 	private _variableHandles = new Handles<string>();
 
+	private _session = new FirefoxSession();
 
 	/**
 	 * Creates a new debug adapter that is used for one debug session.
@@ -61,6 +66,11 @@ class FirefoxDebugSession extends DebugSession {
 		// this debugger uses zero-based lines and columns
 		this.setDebuggerLinesStartAt1(false);
 		this.setDebuggerColumnsStartAt1(false);
+
+		this._session = new FirefoxSession();
+		this._session._onOutput = (s: string) => {
+			this.sendEvent(new OutputEvent(s + '\n'));
+		};
 	}
 
 	/**
@@ -94,6 +104,8 @@ class FirefoxDebugSession extends DebugSession {
 			// we just start to run until we hit a breakpoint or an exception
 			this.continueRequest(response, { threadId: FirefoxDebugSession.THREAD_ID });
 		}
+
+		this._session.launch(args);
 	}
 
 	protected setBreakPointsRequest(response: DebugProtocol.SetBreakpointsResponse, args: DebugProtocol.SetBreakpointsArguments): void {
