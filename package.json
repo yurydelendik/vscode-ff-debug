@@ -70,7 +70,12 @@
 						    "port": {
 							    "type": "number",
 							    "description": "Remote server port",
-							    "default": 9223
+							    "default": 6000
+							},
+						    "profileDir": {
+							    "type": "string",
+							    "description": "Temporary Firefox profile dir",
+							    "default": ""
 							}
 						}
 					}
@@ -82,8 +87,9 @@
 						"type": "firefox",
 						"request": "launch",
 					    "runtimeExecutable": "/Applications/FirefoxDeveloperEdition.app/Contents/MacOS/firefox",
-					    "port": 9988,
+					    "port": 6000,
 						"program": "$(workspaceRoot)/index.html",
+					    "profileDir": "$(workspaceRoot)/.firefoxProfile",
 						"stopOnEntry": false
 					}
 				]

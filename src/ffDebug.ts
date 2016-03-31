@@ -22,6 +22,7 @@ export interface LaunchRequestArguments {
 
 	runtimeExecutable?: string;
 	port?: number;
+	profileDir?: string;
 }
 
 class FirefoxDebugSession extends DebugSession {
@@ -68,9 +69,16 @@ class FirefoxDebugSession extends DebugSession {
 		this.setDebuggerColumnsStartAt1(false);
 
 		this._session = new FirefoxSession();
-		this._session._onOutput = (s: string) => {
-			this.sendEvent(new OutputEvent(s + '\n'));
+		this._session._onOutput = (s: string, category?: string): void => {
+			this.sendEvent(new OutputEvent(s + '\n', category || 'stdout'));
 		};
+		this._session._onNotification = (topic: string, args: any): void => {
+			this.onFirefoxNotification(topic, args);
+		};
+	}
+
+	private onFirefoxNotification(topic: string, args: any): void {
+		// TODO
 	}
 
 	/**
@@ -286,6 +294,16 @@ class FirefoxDebugSession extends DebugSession {
 			variablesReference: 0
 		};
 		this.sendResponse(response);
+	}
+
+	protected disconnectRequest(response: DebugProtocol.DisconnectResponse, args: DebugProtocol.DisconnectArguments): void {
+		this.sendEvent(new OutputEvent('stopping'));
+
+		this._session.stop();
+		this._session = null;
+
+		this.sendResponse(response);
+		this.shutdown();
 	}
 }
 
