@@ -20,6 +20,7 @@ export interface LaunchRequestArguments {
 	/** Automatically stop target after launch. If not specified, target does not stop. */
 	stopOnEntry?: boolean;
 
+	webRoot?: string;
 	runtimeExecutable?: string;
 	port?: number;
 	profileDir?: string;
@@ -57,6 +58,8 @@ class FirefoxDebugSession extends DebugSession {
 
 	private _session = new FirefoxSession();
 
+	private _stopOnEntry: boolean;
+
 	/**
 	 * Creates a new debug adapter that is used for one debug session.
 	 * We configure the default implementation of a debug adapter here.
@@ -65,7 +68,7 @@ class FirefoxDebugSession extends DebugSession {
 		super();
 
 		// this debugger uses zero-based lines and columns
-		this.setDebuggerLinesStartAt1(false);
+		this.setDebuggerLinesStartAt1(true);
 		this.setDebuggerColumnsStartAt1(false);
 
 		this._session = new FirefoxSession();
@@ -78,7 +81,24 @@ class FirefoxDebugSession extends DebugSession {
 	}
 
 	private onFirefoxNotification(topic: string, args: any): void {
-		// TODO
+		switch (topic) {
+			case 'paused':
+				if (args.reason === 'attached') {
+					if (this._stopOnEntry) {
+						// we stop on the first line
+						this.sendEvent(new StoppedEvent("entry", FirefoxDebugSession.THREAD_ID));
+					} else {
+						// we just start to run until we hit a breakpoint or an exception
+						this._session.resume();
+					}
+					return;
+				}
+				// TODO
+				this.sendEvent(new StoppedEvent("debugger", FirefoxDebugSession.THREAD_ID));
+				return;
+			case 'source':
+
+		}
 	}
 
 	/**
@@ -99,21 +119,10 @@ class FirefoxDebugSession extends DebugSession {
 	}
 
 	protected launchRequest(response: DebugProtocol.LaunchResponse, args: LaunchRequestArguments): void {
-		this._sourceFile = args.program;
-		this._sourceLines = readFileSync(this._sourceFile).toString().split('\n');
-
-		if (args.stopOnEntry) {
-			this._currentLine = 0;
-			this.sendResponse(response);
-
-			// we stop on the first line
-			this.sendEvent(new StoppedEvent("entry", FirefoxDebugSession.THREAD_ID));
-		} else {
-			// we just start to run until we hit a breakpoint or an exception
-			this.continueRequest(response, { threadId: FirefoxDebugSession.THREAD_ID });
-		}
+		this._stopOnEntry = false; //args.stopOnEntry;
 
 		this._session.launch(args);
+		this.sendResponse(response);
 	}
 
 	protected setBreakPointsRequest(response: DebugProtocol.SetBreakpointsResponse, args: DebugProtocol.SetBreakpointsArguments): void {
@@ -169,19 +178,23 @@ class FirefoxDebugSession extends DebugSession {
 	}
 
 	protected stackTraceRequest(response: DebugProtocol.StackTraceResponse, args: DebugProtocol.StackTraceArguments): void {
-
-		const frames = new Array<StackFrame>();
-		const words = this._sourceLines[this._currentLine].trim().split(/\s+/);
-		// create three fake stack frames.
-		for (let i= 0; i < 3; i++) {
-			// use a word of the line as the stackframe name
-			const name = words.length > i ? words[i] : "frame";
-			frames.push(new StackFrame(i, `${name}(${i})`, new Source(basename(this._sourceFile), this.convertDebuggerPathToClient(this._sourceFile)), this.convertDebuggerLineToClient(this._currentLine), 0));
-		}
-		response.body = {
-			stackFrames: frames
-		};
-		this.sendResponse(response);
+		this._session.getStackTrace().then((stack: Array<{name: string, source: string, line: number}>) => {
+			const frames = new Array<StackFrame>();
+			stack.forEach((f: {name: string, source: string, line: number}, index: number) => {
+				var path = this.convertDebuggerPathToClient(f.source);
+				frames.push(new StackFrame(
+						index,
+						`${f.name}(${index})`,
+						new Source(basename(path), path),
+						this.convertDebuggerLineToClient(f.line),
+						0)
+				);
+			});
+			response.body = {
+				stackFrames: frames
+			};
+			this.sendResponse(response);
+		});
 	}
 
 	protected scopesRequest(response: DebugProtocol.ScopesResponse, args: DebugProtocol.ScopesArguments): void {
@@ -232,7 +245,8 @@ class FirefoxDebugSession extends DebugSession {
 	}
 
 	protected continueRequest(response: DebugProtocol.ContinueResponse, args: DebugProtocol.ContinueArguments): void {
-
+		this._session.resume();
+	 /*
 		// find the breakpoints for the current source file
 		const breakpoints = this._breakPoints[this._sourceFile];
 
@@ -271,10 +285,13 @@ class FirefoxDebugSession extends DebugSession {
 		this.sendResponse(response);
 		// no more lines: run to end
 		this.sendEvent(new TerminatedEvent());
+		*/
 	}
 
 	protected nextRequest(response: DebugProtocol.NextResponse, args: DebugProtocol.NextArguments): void {
-
+		this._session.resume();
+		this.sendResponse(response);
+		/*
 		for (let ln = this._currentLine+1; ln < this._sourceLines.length; ln++) {
 			if (this._sourceLines[ln].trim().length > 0) {   // find next non-empty line
 				this._currentLine = ln;
@@ -286,6 +303,7 @@ class FirefoxDebugSession extends DebugSession {
 		this.sendResponse(response);
 		// no more lines: run to end
 		this.sendEvent(new TerminatedEvent());
+		*/
 	}
 
 	protected evaluateRequest(response: DebugProtocol.EvaluateResponse, args: DebugProtocol.EvaluateArguments): void {
@@ -305,6 +323,13 @@ class FirefoxDebugSession extends DebugSession {
 		this.sendResponse(response);
 		this.shutdown();
 	}
-}
+
+	protected convertClientPathToDebugger(path: string): string {
+		return this._session.urlHelper.convertToWeb(path);
+	}
+
+	protected convertDebuggerPathToClient(path: string): string {
+		return this._session.urlHelper.convertToLocal(path);
+	}}
 
 DebugSession.run(FirefoxDebugSession);

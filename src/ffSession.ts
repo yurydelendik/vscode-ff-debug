@@ -1,6 +1,7 @@
 "use strict";
 
 import {FirefoxProtocol} from './ffProtocol';
+import {IURLHelper, LocalURLHelper, HttpURLHelper} from './ffUrlHelper';
 
 import {spawn, ChildProcess} from 'child_process';
 import * as path from 'path';
@@ -10,10 +11,11 @@ const DefaultPort: number = 9223;
 
 class FirefoxProtocolImpl extends FirefoxProtocol {
   private _session: FirefoxSession;
+  public contextActor: ContextActor;
 
   private _map: Map<string, Actor>;
 
-  public constructor(program: string, session: FirefoxSession) {
+  public constructor(program: string, urlHelper: IURLHelper, session: FirefoxSession) {
     super();
     this._session = session;
     this._map = Object.create(null);
@@ -44,7 +46,7 @@ class FirefoxProtocolImpl extends FirefoxProtocol {
   }
 
   public notifySession(topic: string, args: any): void {
-    // TODO
+    this._session._onNotification(topic, args);
   }
 }
 
@@ -234,6 +236,7 @@ class TabActor extends Actor {
       case 'tabAttached':
         var threadActor = body.threadActor;
         this._contextActor = new ContextActor(threadActor, this.protocol);
+        this.protocol.contextActor = this._contextActor;
         this.protocol.addActor(this._contextActor);
 
         this.log('context is defined.');
@@ -251,6 +254,9 @@ class ContextActor extends Actor {
     super(name, protocol);
 
     this.sendMessage({type: 'attach'});
+    this.sendRequest({type: 'sources'}).then(function () {
+      // we got all sources
+    });
   }
 
   public processNotification(body: any) {
@@ -259,16 +265,36 @@ class ContextActor extends Actor {
         var reason = body.why && body.why.type;
         this.log('paused: ' + reason);
         this.protocol.notifySession('paused', {reason: reason});
-        this.sendMessage({type: 'resume'});
         return true;
       case 'resumed':
         this.log('resumed');
         return true;
       case 'newGlobal':
-        // TODO
+        // TODO shall we do something here?
+        return true;
+      case 'newSource':
+        // TODO shall we do something here?
         return true;
     }
     return false;
+  }
+
+  public resume(reason?: string): void {
+    this.sendMessage({type: 'resume'});
+  }
+
+  public getStackTrace(): Promise< Array<{name: string, source: string, line: number}> > {
+    return this.sendRequest({type: 'frames'}).then((body) => {
+      var frames = body.frames;
+      return frames.map((f, index: number) => {
+        return {
+          depth: index,
+          name: f.callee.name,
+          source: f.where.source.url,
+          line: f.where.line
+        };
+      });
+    });
   }
 }
 
@@ -278,6 +304,7 @@ export class FirefoxSession {
 
   public _onOutput: (s: string, category?: string) => void;
   public _onNotification: (typic: string, args: any) => void;
+  public urlHelper: IURLHelper;
 
   public constructor() {
 
@@ -297,9 +324,17 @@ user_pref("devtools.debugger.remote-enabled", true);
 `);
   }
 
-  public launch(args: {runtimeExecutable?: string; port?: number; program: string; profileDir?: string}): void {
+  public launch(args: {runtimeExecutable?: string; port?: number; program: string;
+                       profileDir?: string, webRoot?: string}): void {
     var url: string = args.program;
-    if (url.indexOf(':') < 0) url = 'file://' + url;
+    var urlHelper: IURLHelper;
+    if (url.indexOf('://') < 0) {
+      urlHelper = new LocalURLHelper();
+      url = urlHelper.convertToWeb(url);
+    } else {
+      if (!args.webRoot) throw new Error('webRoot is not set');
+      urlHelper = new HttpURLHelper(args.webRoot, url);
+    }
     var port: number = args.port || DefaultPort;
     var processArgs = [];
     processArgs.push('--no-remote');
@@ -317,11 +352,12 @@ user_pref("devtools.debugger.remote-enabled", true);
         stdio: ['ignore']
       });
     }
-    this.attach(port, url);
+    this.attach(port, url, urlHelper);
   }
 
-  public attach(port: number, program: string): void {
-    this._protocol = new FirefoxProtocolImpl(program, this);
+  public attach(port: number, program: string, urlHelper: IURLHelper): void {
+    this.urlHelper = urlHelper;
+    this._protocol = new FirefoxProtocolImpl(program, urlHelper, this);
     setTimeout(() => {
       this._protocol.connect(port)
     }, 5000);
@@ -329,5 +365,13 @@ user_pref("devtools.debugger.remote-enabled", true);
 
   public stop(): void {
     this._process.kill();
+  }
+
+  public resume(reason?: string): void {
+    this._protocol.contextActor.resume(reason);
+  }
+
+  public getStackTrace(): Promise< Array<{name: string, source: string, line: number}> > {
+    return this._protocol.contextActor.getStackTrace();
   }
 }
