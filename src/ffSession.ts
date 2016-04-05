@@ -8,6 +8,13 @@ import * as path from 'path';
 import * as fs from 'fs';
 
 const DefaultPort: number = 9223;
+const EnvironmentVariablesPrefix = 'env!';
+
+
+export interface ResultVariable {
+  display: string;
+  id?: string;
+}
 
 class FirefoxProtocolImpl extends FirefoxProtocol {
   private _session: FirefoxSession;
@@ -35,6 +42,10 @@ class FirefoxProtocolImpl extends FirefoxProtocol {
 
   public addActor(actor: Actor): void  {
     this._map[actor.name] = actor;
+  }
+
+  public removeActor(actor: Actor): void {
+    delete this._map[actor.name];
   }
 
   public relayResponse(body: any): void  {
@@ -82,6 +93,17 @@ class Actor {
     this.notImplemented = (body: any) => {
       this.log('NI: ' + JSON.stringify(body));
     };
+  }
+
+  public executeOnce<T>(action: ()=>Promise<T>): Promise<T> {
+    this.protocol.addActor(this);
+    return action().then((result: T) => {
+      this.protocol.removeActor(this);
+      return result;
+    }, (reason) => {
+      this.protocol.removeActor(this);
+      throw reason;
+    });
   }
 
   public processCommand(body: any): boolean {
@@ -258,7 +280,7 @@ class TabActor extends Actor {
 
 class ContextActor extends Actor {
   private _evaluateCallbacks: {
-    resolve: (string) => void,
+    resolve: (ResultVariable) => void,
     reject: (any) => void
   };
 
@@ -271,23 +293,27 @@ class ContextActor extends Actor {
     });
   }
 
-  private formatGrip(value: any): Promise<string> {
+  private formatGrip(value: any): string {
     if (typeof value !== 'object' || value === null) {
-      return Promise.resolve('' + value);
+      return '' + value;
     }
-    return Promise.resolve(`[${value.class}]`); // TODO
+    return `[${value.class}]`; // TODO
   }
 
-  private formatReturnValue(value: any): Promise<string>  {
+  private getActor(value: any): string {
+    return typeof value === 'object' && value !== null ?
+      value.actor : undefined;
+  }
+
+  private formatReturnValue(value: any): ResultVariable  {
     if (value.terminated) {
-      return Promise.resolve('(terminated)');
+      return {display: '(terminated)'};
     }
     if (value.throw) {
-      return this.formatGrip(value.throw).then((s: string) => {
-        return `(error: ${s})`;
-      });
+      var s = this.formatGrip(value.throw);
+      return {display: `(error: ${s})`, id: this.getActor(value.throw)};
     }
-    return this.formatGrip(value.return);
+    return {display: this.formatGrip(value.return), id: this.getActor(value.return)};
   }
 
   public processNotification(body: any): boolean {
@@ -295,8 +321,8 @@ class ContextActor extends Actor {
       case 'paused':
         var reason = body.why && body.why.type;
         if (reason === 'clientEvaluated') {
-          this.formatReturnValue(body.why.frameFinished).then(
-            this._evaluateCallbacks.resolve, this._evaluateCallbacks.reject);
+          this._evaluateCallbacks.resolve(
+            this.formatReturnValue(body.why.frameFinished));
           return true;
         }
         this.log('paused: ' + reason);
@@ -354,14 +380,94 @@ class ContextActor extends Actor {
     });
   }
 
-  public evaluate(expr: string, frameId?: number): Promise<string> {
-    return new Promise<string>((resolve, reject) => {
+  public getScopes(frame: number): Promise< Array<{type: string, id: string}> > {
+    return this.sendRequest({type: 'frames', startFrame: frame, count: 1}).then((body) => {
+      var environment = body.frames[0].environment;
+
+      var first = true;
+      var result = new Array<{type: string, id: string}>();
+      while (environment) {
+        var parent = environment.parent;
+        result.push({
+          type: !parent ? 'Global' : first ? "Local" : "Closure",
+          id: EnvironmentVariablesPrefix + environment.actor
+        });
+        first = false;
+        environment = parent;
+      }
+      return result;
+    });
+  }
+
+  private translateProperty(desc): ResultVariable {
+    if (!('value' in desc)) {
+      return {display: '(property)'};
+    }
+    return {display: this.formatGrip(desc.value), id: this.getActor(desc.value)};
+  }
+
+  private translateProperties(item, result: Array<{name: string, value: ResultVariable}>): void {
+    Object.keys(item).forEach((key) => {
+      result.push({name: key, value: this.translateProperty(item[key])});
+    });
+  }
+
+  public getVariables(refId: string): Promise< Array<{name: string, value: ResultVariable}> > {
+    if (refId.indexOf(EnvironmentVariablesPrefix) === 0) {
+      var environment = new EnvironmentActor(refId.substring(EnvironmentVariablesPrefix.length), this.protocol);
+      return environment.executeOnce(() => environment.getBindings()).then((body) => {
+        var result = new Array<{name: string, value: ResultVariable}>();
+        if (body.arguments) {
+          body.arguments.forEach((item) => {
+            this.translateProperties(item, result);
+          });
+        }
+        if (body.variables) {
+          this.translateProperties(body.variables, result);
+        }
+        return result;
+      });
+    } else {
+      var objectGrip = new GripActor(refId, this.protocol);
+      return objectGrip.executeOnce(() => objectGrip.getPrototypeAndProperties()).then((body) => {
+        var result = new Array<{name: string, value: ResultVariable}>();
+        this.translateProperties(body.ownProperties, result);
+        if (body.prototype) {
+          result.push({name: '__proto__', value: this.translateProperty(body.prototype)});
+        }
+        return result;
+      });
+    }
+  }
+
+  public evaluate(expr: string, frameId?: number): Promise<ResultVariable> {
+    return new Promise<ResultVariable>((resolve, reject) => {
       this.sendMessage({ "type":"clientEvaluate", "expression":expr, "frame": frameId || 0 });
       this._evaluateCallbacks = {
         resolve: resolve,
         reject: reject
       };
     });
+  }
+}
+
+class EnvironmentActor extends Actor {
+  public constructor(name: string, protocol: FirefoxProtocolImpl) {
+    super(name, protocol);
+  }
+
+  public getBindings(): Promise< {arguments?: Array<any>, variables?: any} > {
+    return this.sendRequest({type: 'bindings'}).then(body => body.bindings);
+  }
+}
+
+class GripActor extends Actor  {
+  public constructor(name: string, protocol: FirefoxProtocolImpl) {
+    super(name, protocol);
+  }
+
+  public getPrototypeAndProperties(): Promise<{prototype?: any, ownProperties: any}> {
+    return this.sendRequest({type:"prototypeAndProperties"});
   }
 }
 
@@ -443,7 +549,16 @@ user_pref("devtools.debugger.remote-enabled", true);
     return this._protocol.contextActor.getStackTrace(startFrame, maxLevels);
   }
 
-  public evaluate(expr: string, frameId?: number): Promise<string> {
+  public getScopes(frame: number): Promise< Array<{type: string, id: string}> > {
+    return this._protocol.contextActor.getScopes(frame);
+  }
+
+  public evaluate(expr: string, frameId?: number): Promise<ResultVariable> {
     return this._protocol.contextActor.evaluate(expr, frameId);
   }
+
+  public getVariables(refId: string): Promise< Array<{name: string, value: ResultVariable}> > {
+    return this._protocol.contextActor.getVariables(refId);
+  }
+
 }

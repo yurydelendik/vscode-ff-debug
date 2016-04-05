@@ -183,50 +183,36 @@ class FirefoxDebugSession extends DebugSession {
 	}
 
 	protected scopesRequest(response: DebugProtocol.ScopesResponse, args: DebugProtocol.ScopesArguments): void {
-
 		const frameReference = args.frameId;
-		const scopes = new Array<Scope>();
-		scopes.push(new Scope("Local", this._variableHandles.create("local_" + frameReference), false));
-		scopes.push(new Scope("Closure", this._variableHandles.create("closure_" + frameReference), false));
-		scopes.push(new Scope("Global", this._variableHandles.create("global_" + frameReference), true));
+		this._session.getScopes(frameReference).then((items) => {
+			const scopes = new Array<Scope>();
+			items.forEach((item) => {
+				scopes.push(new Scope(item.type, this._variableHandles.create(item.id), item.type === 'Global'));
+			});
 
-		response.body = {
-			scopes: scopes
-		};
-		this.sendResponse(response);
+			response.body = {
+				scopes: scopes
+			};
+			this.sendResponse(response);
+		});
 	}
 
 	protected variablesRequest(response: DebugProtocol.VariablesResponse, args: DebugProtocol.VariablesArguments): void {
-
-		const variables = [];
 		const id = this._variableHandles.get(args.variablesReference);
-		if (id != null) {
-			variables.push({
-				name: id + "_i",
-				value: "123",
-				variablesReference: 0
+		this._session.getVariables(id).then((items) => {
+			const variables = [];
+			items.forEach((item) => {
+				variables.push({
+					name: item.name,
+					value: item.value.display,
+					variablesReference: !item.value.id ? 0 : this._variableHandles.create(item.value.id)
+				});
 			});
-			variables.push({
-				name: id + "_f",
-				value: "3.14",
-				variablesReference: 0
-			});
-			variables.push({
-				name: id + "_s",
-				value: "hello world",
-				variablesReference: 0
-			});
-			variables.push({
-				name: id + "_o",
-				value: "Object",
-				variablesReference: this._variableHandles.create("object_")
-			});
-		}
-
-		response.body = {
-			variables: variables
-		};
-		this.sendResponse(response);
+			response.body = {
+				variables: variables
+			};
+			this.sendResponse(response);
+		});
 	}
 
 	protected continueRequest(response: DebugProtocol.ContinueResponse, args: DebugProtocol.ContinueArguments): void {
@@ -252,8 +238,8 @@ class FirefoxDebugSession extends DebugSession {
 	protected evaluateRequest(response: DebugProtocol.EvaluateResponse, args: DebugProtocol.EvaluateArguments): void {
 		this._session.evaluate(args.expression, args.frameId).then((result) => {
 			response.body = {
-				result: result,
-				variablesReference: 0
+				result: result.display,
+				variablesReference: !result.id ? 0 : this._variableHandles.create(result.id)
 			};
 			this.sendResponse(response);
 		}, (reason) => {
