@@ -88,6 +88,9 @@ class Actor {
     if (body.type) {
       return this.processNotification(body);
     }
+    if (body.error) {
+      return this.processError(body);
+    }
     return this.processResponse(body);
   }
 
@@ -106,6 +109,10 @@ class Actor {
   }
 
   protected processNotification(body: any): boolean  {
+    return false;
+  }
+
+  protected processError(body: any): boolean {
     return false;
   }
 
@@ -250,6 +257,11 @@ class TabActor extends Actor {
 }
 
 class ContextActor extends Actor {
+  private _evaluateCallbacks: {
+    resolve: (string) => void,
+    reject: (any) => void
+  };
+
   public constructor(name: string, protocol: FirefoxProtocolImpl) {
     super(name, protocol);
 
@@ -259,10 +271,34 @@ class ContextActor extends Actor {
     });
   }
 
-  public processNotification(body: any) {
+  private formatGrip(value: any): Promise<string> {
+    if (typeof value !== 'object' || value === null) {
+      return Promise.resolve('' + value);
+    }
+    return Promise.resolve(`[${value.class}]`); // TODO
+  }
+
+  private formatReturnValue(value: any): Promise<string>  {
+    if (value.terminated) {
+      return Promise.resolve('(terminated)');
+    }
+    if (value.throw) {
+      return this.formatGrip(value.throw).then((s: string) => {
+        return `(error: ${s})`;
+      });
+    }
+    return this.formatGrip(value.return);
+  }
+
+  public processNotification(body: any): boolean {
     switch (body.type) {
       case 'paused':
         var reason = body.why && body.why.type;
+        if (reason === 'clientEvaluated') {
+          this.formatReturnValue(body.why.frameFinished).then(
+            this._evaluateCallbacks.resolve, this._evaluateCallbacks.reject);
+          return true;
+        }
         this.log('paused: ' + reason);
         this.protocol.notifySession('paused', {reason: reason});
         return true;
@@ -279,12 +315,33 @@ class ContextActor extends Actor {
     return false;
   }
 
-  public resume(reason?: string): void {
-    this.sendMessage({type: 'resume'});
+  public processError(body: any): boolean {
+    switch (body.error) {
+      case 'unknownFrame':
+      case 'notDebuggee':
+      case 'wrongState':
+        if (this._evaluateCallbacks) {
+          this._evaluateCallbacks.reject(new Error(body.message));
+          return true;
+        }
+        return false;
+    }
   }
 
-  public getStackTrace(): Promise< Array<{name: string, source: string, line: number}> > {
-    return this.sendRequest({type: 'frames'}).then((body) => {
+  public resume(reason?: string): void {
+    if (!reason) {
+      this.sendMessage({type: 'resume'});
+      return;
+    }
+    var resumeLimit = {
+      type: reason
+    };
+    this.sendMessage({type: 'resume', resumeLimit: resumeLimit});
+  }
+
+  public getStackTrace(startFrame?: number, maxLevels?: number):
+      Promise< Array<{name: string, source: string, line: number}> > {
+    return this.sendRequest({type: 'frames', startFrame: startFrame, count: maxLevels}).then((body) => {
       var frames = body.frames;
       return frames.map((f, index: number) => {
         return {
@@ -294,6 +351,16 @@ class ContextActor extends Actor {
           line: f.where.line
         };
       });
+    });
+  }
+
+  public evaluate(expr: string, frameId?: number): Promise<string> {
+    return new Promise<string>((resolve, reject) => {
+      this.sendMessage({ "type":"clientEvaluate", "expression":expr, "frame": frameId || 0 });
+      this._evaluateCallbacks = {
+        resolve: resolve,
+        reject: reject
+      };
     });
   }
 }
@@ -371,7 +438,11 @@ user_pref("devtools.debugger.remote-enabled", true);
     this._protocol.contextActor.resume(reason);
   }
 
-  public getStackTrace(): Promise< Array<{name: string, source: string, line: number}> > {
-    return this._protocol.contextActor.getStackTrace();
+  public getStackTrace(startFrame?: number, maxLevels?: number): Promise< Array<{name: string, source: string, line: number}> > {
+    return this._protocol.contextActor.getStackTrace(startFrame, maxLevels);
+  }
+
+  public evaluate(expr: string, frameId?: number): Promise<string> {
+    return this._protocol.contextActor.evaluate(expr, frameId);
   }
 }

@@ -35,22 +35,6 @@ class FirefoxDebugSession extends DebugSession {
 	// so that the frontend can match events with breakpoints.
 	private _breakpointId = 1000;
 
-	// This is the next line that will be 'executed'
-	private __currentLine = 0;
-	private get _currentLine() : number {
-		return this.__currentLine;
-    }
-	private set _currentLine(line: number) {
-		this.__currentLine = line;
-		this.sendEvent(new OutputEvent(`line: ${line}\n`));	// print current line on debug console
-	}
-
-	// the initial (and one and only) file we are 'debugging'
-	private _sourceFile: string;
-
-	// the contents (= lines) of the one and only file
-	private _sourceLines = new Array<string>();
-
 	// maps from sourceFile to array of Breakpoints
 	private _breakPoints = new Map<string, DebugProtocol.Breakpoint[]>();
 
@@ -178,7 +162,8 @@ class FirefoxDebugSession extends DebugSession {
 	}
 
 	protected stackTraceRequest(response: DebugProtocol.StackTraceResponse, args: DebugProtocol.StackTraceArguments): void {
-		this._session.getStackTrace().then((stack: Array<{name: string, source: string, line: number}>) => {
+		this._session.getStackTrace((<any>args).startFrame, args.levels).then(
+			  (stack: Array<{name: string, source: string, line: number}>) => {
 			const frames = new Array<StackFrame>();
 			stack.forEach((f: {name: string, source: string, line: number}, index: number) => {
 				var path = this.convertDebuggerPathToClient(f.source);
@@ -246,72 +231,38 @@ class FirefoxDebugSession extends DebugSession {
 
 	protected continueRequest(response: DebugProtocol.ContinueResponse, args: DebugProtocol.ContinueArguments): void {
 		this._session.resume();
-	 /*
-		// find the breakpoints for the current source file
-		const breakpoints = this._breakPoints[this._sourceFile];
-
-		for (var ln = this._currentLine+1; ln < this._sourceLines.length; ln++) {
-
-			if (breakpoints) {
-				const bps = breakpoints.filter(bp => bp.line === this.convertDebuggerLineToClient(ln));
-				if (bps.length > 0) {
-					this._currentLine = ln;
-
-					// 'continue' request finished
-					this.sendResponse(response);
-
-					// send 'stopped' event
-					this.sendEvent(new StoppedEvent("breakpoint", FirefoxDebugSession.THREAD_ID));
-
-					// the following shows the use of 'breakpoint' events to update properties of a breakpoint in the UI
-					// if breakpoint is not yet verified, verify it now and send a 'breakpoint' update event
-					if (!bps[0].verified) {
-						bps[0].verified = true;
-						this.sendEvent(new BreakpointEvent("update", bps[0]));
-					}
-					return;
-				}
-			}
-
-			// if word 'exception' found in source -> throw exception
-			if (this._sourceLines[ln].indexOf("exception") >= 0) {
-				this._currentLine = ln;
-				this.sendResponse(response);
-				this.sendEvent(new StoppedEvent("exception", FirefoxDebugSession.THREAD_ID));
-				this.sendEvent(new OutputEvent(`exception in line: ${ln}\n`, 'stderr'));
-				return;
-			}
-		}
 		this.sendResponse(response);
-		// no more lines: run to end
-		this.sendEvent(new TerminatedEvent());
-		*/
 	}
 
 	protected nextRequest(response: DebugProtocol.NextResponse, args: DebugProtocol.NextArguments): void {
-		this._session.resume();
+		this._session.resume('next');
 		this.sendResponse(response);
-		/*
-		for (let ln = this._currentLine+1; ln < this._sourceLines.length; ln++) {
-			if (this._sourceLines[ln].trim().length > 0) {   // find next non-empty line
-				this._currentLine = ln;
-				this.sendResponse(response);
-				this.sendEvent(new StoppedEvent("step", FirefoxDebugSession.THREAD_ID));
-				return;
-			}
-		}
+	}
+
+	protected stepInRequest(response: DebugProtocol.StepInResponse, args: DebugProtocol.StepInArguments): void {
+		this._session.resume('step');
 		this.sendResponse(response);
-		// no more lines: run to end
-		this.sendEvent(new TerminatedEvent());
-		*/
+	}
+
+	protected stepOutRequest(response: DebugProtocol.StepOutResponse, args: DebugProtocol.StepOutArguments): void {
+		this._session.resume('finish');
+		this.sendResponse(response);
 	}
 
 	protected evaluateRequest(response: DebugProtocol.EvaluateResponse, args: DebugProtocol.EvaluateArguments): void {
-		response.body = {
-			result: `evaluate(${args.expression})`,
-			variablesReference: 0
-		};
-		this.sendResponse(response);
+		this._session.evaluate(args.expression, args.frameId).then((result) => {
+			response.body = {
+				result: result,
+				variablesReference: 0
+			};
+			this.sendResponse(response);
+		}, (reason) => {
+      response.body = {
+				result: 'eval error: ' + reason,
+				variablesReference: 0
+			};
+			this.sendResponse(response);
+		});
 	}
 
 	protected disconnectRequest(response: DebugProtocol.DisconnectResponse, args: DebugProtocol.DisconnectArguments): void {
