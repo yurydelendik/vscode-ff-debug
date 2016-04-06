@@ -16,15 +16,29 @@ export interface ResultVariable {
   id?: string;
 }
 
+class PromiseCapability<T> {
+  public promise: Promise<T>;
+  public resolve: (T) => void;
+  public reject: (any) => void;
+  public constructor() {
+    this.promise = new Promise<T>((resolve, reject) => {
+      this.resolve = resolve;
+      this.reject = reject;
+    });
+  }
+}
+
 class FirefoxProtocolImpl extends FirefoxProtocol {
   private _session: FirefoxSession;
   public contextActor: ContextActor;
+  public urlHelper: IURLHelper;
 
   private _map: Map<string, Actor>;
 
   public constructor(program: string, urlHelper: IURLHelper, session: FirefoxSession) {
     super();
     this._session = session;
+    this.urlHelper = urlHelper;
     this._map = Object.create(null);
     this.addActor(new RootActor('root', this, program));
   }
@@ -62,21 +76,21 @@ class FirefoxProtocolImpl extends FirefoxProtocol {
 }
 
 class ActorRequest {
-  public promise: Promise<any>;
-  private _resolve: (any) => void;
-  private _reject: (any) => void;
+  private _capability: PromiseCapability<any>;
 
   public constructor(public body: any) {
-    this.promise = new Promise<any>((resolve, reject) => {
-      this._resolve = resolve;
-      this._reject = reject;
-    });
+    this._capability = new PromiseCapability<any>();
   }
+
+  public get promise(): Promise<any> {
+    return this._capability.promise;
+  }
+
   public respond(response: any): void  {
     if (!response.error) {
-      this._resolve(response);
+      this._capability.resolve(response);
     } else {
-      this._reject(new Error(response.error + ': ' + JSON.stringify(response)));
+      this._capability.reject(new Error(response.error + ': ' + JSON.stringify(response)));
     }
   }
 }
@@ -279,13 +293,12 @@ class TabActor extends Actor {
 }
 
 class ContextActor extends Actor {
-  private _evaluateCallbacks: {
-    resolve: (ResultVariable) => void,
-    reject: (any) => void
-  };
+  private _evaluateCapabilty: PromiseCapability<ResultVariable>;
 
   public constructor(name: string, protocol: FirefoxProtocolImpl) {
     super(name, protocol);
+
+    this._evaluateCapabilty = null;
 
     this.sendMessage({type: 'attach'});
     this.sendRequest({type: 'sources'}).then(function () {
@@ -321,7 +334,7 @@ class ContextActor extends Actor {
       case 'paused':
         var reason = body.why && body.why.type;
         if (reason === 'clientEvaluated') {
-          this._evaluateCallbacks.resolve(
+          this._evaluateCapabilty.resolve(
             this.formatReturnValue(body.why.frameFinished));
           return true;
         }
@@ -335,7 +348,16 @@ class ContextActor extends Actor {
         // TODO shall we do something here?
         return true;
       case 'newSource':
-        // TODO shall we do something here?
+        var url = body.source.url;
+        if (!url) {
+          return true; // ignoring scripts without url
+        }
+        var path = this.protocol.urlHelper.convertToLocal(url);
+        if (!path) {
+          return true; // ignoring non-project scripts
+        }
+        this.protocol.notifySession('source', {
+          path: path, url: url, id: body.source.actor})
         return true;
     }
     return false;
@@ -346,10 +368,12 @@ class ContextActor extends Actor {
       case 'unknownFrame':
       case 'notDebuggee':
       case 'wrongState':
-        if (this._evaluateCallbacks) {
-          this._evaluateCallbacks.reject(new Error(body.message));
+        if (this._evaluateCapabilty) {
+          this._evaluateCapabilty.reject(new Error(body.message));
           return true;
         }
+        return false;
+      default:
         return false;
     }
   }
@@ -443,11 +467,29 @@ class ContextActor extends Actor {
   public evaluate(expr: string, frameId?: number): Promise<ResultVariable> {
     return new Promise<ResultVariable>((resolve, reject) => {
       this.sendMessage({ "type":"clientEvaluate", "expression":expr, "frame": frameId || 0 });
-      this._evaluateCallbacks = {
-        resolve: resolve,
-        reject: reject
-      };
+      this._evaluateCapabilty = new PromiseCapability<ResultVariable>();
     });
+  }
+
+  public addBreakpoints(sourceId: string, lines: number[]): Promise< Array<{id: string, line: number}> > {
+    var source = new SourceActor(sourceId, this.protocol);
+    return source.executeOnce(() => {
+      var promises = lines.map((line) => {
+        return source.addBreakpoint(line);
+      });
+      return Promise.all(promises);
+    });
+  }
+
+  public removeBreakpoints(ids: string[]): Promise<any> {
+    var promise = Promise.resolve(undefined);
+    ids.forEach((id) => {
+      var breakpoint = new Breakpoint(id, this.protocol);
+      promise = promise.then(() => {
+        return breakpoint.executeOnce(() => breakpoint.remove());
+      });
+    });
+    return promise;
   }
 }
 
@@ -467,7 +509,34 @@ class GripActor extends Actor  {
   }
 
   public getPrototypeAndProperties(): Promise<{prototype?: any, ownProperties: any}> {
-    return this.sendRequest({type:"prototypeAndProperties"});
+    return this.sendRequest({type: 'prototypeAndProperties'});
+  }
+}
+
+class SourceActor extends Actor {
+  public constructor(name: string, protocol: FirefoxProtocolImpl) {
+    super(name, protocol);
+  }
+
+  public addBreakpoint(line: number): Promise<{id: string, line: number}> {
+    return this.sendRequest({type: 'setBreakpoint', location: {line: line}}).then((body) => {
+      var actualLine = body.actualLocation ? body.actualLocation.line : line;
+      var verified = !body.isPending;
+      var actor = body.actor;
+      return {id: actor, line: actualLine, verified: verified};
+    }, (reason) => {
+      return {id: undefined, line: line, verified: false};
+    });
+  }
+}
+
+class Breakpoint extends Actor {
+  public constructor(name: string, protocol: FirefoxProtocolImpl) {
+    super(name, protocol);
+  }
+
+  public remove(): Promise<any> {
+    return this.sendRequest({type: 'delete'});
   }
 }
 
@@ -561,4 +630,11 @@ user_pref("devtools.debugger.remote-enabled", true);
     return this._protocol.contextActor.getVariables(refId);
   }
 
+  public addBreakpoints(sourceId: string, lines: number[]): Promise< Array<{id: string, line: number}> > {
+    return this._protocol.contextActor.addBreakpoints(sourceId, lines);
+  }
+
+  public removeBreakpoints(ids: string[]): Promise<any> {
+    return this._protocol.contextActor.removeBreakpoints(ids);
+  }
 }

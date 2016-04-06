@@ -26,6 +26,18 @@ export interface LaunchRequestArguments {
 	profileDir?: string;
 }
 
+class PromiseCapability<T> {
+	public promise: Promise<T>;
+	public resolve: (T) => void;
+	public reject: (any) => void;
+	public constructor() {
+		this.promise = new Promise<T>((resolve, reject) => {
+			this.resolve = resolve;
+			this.reject = reject;
+		});
+	}
+}
+
 class FirefoxDebugSession extends DebugSession {
 
 	// we don't support multiple threads, so we can use a hardcoded ID for the default thread
@@ -37,6 +49,13 @@ class FirefoxDebugSession extends DebugSession {
 
 	// maps from sourceFile to array of Breakpoints
 	private _breakPoints = new Map<string, DebugProtocol.Breakpoint[]>();
+	private _breakPointsIds = new Map<string, string[]>();
+
+	private _pausedCapability = new PromiseCapability<any>();
+	private _resumeAllowedPromise = this._pausedCapability.promise;
+
+	private _pendingSourceCapabilities: any = Object.create(null);
+	private _sourcePromises: any = Object.create(null);
 
 	private _variableHandles = new Handles<string>();
 
@@ -64,16 +83,25 @@ class FirefoxDebugSession extends DebugSession {
 		};
 	}
 
+	private resume(resumeLimit?: string): void {
+		this._resumeAllowedPromise.then((_) => {
+			this._pausedCapability = new PromiseCapability<any>();
+			this._resumeAllowedPromise = this._pausedCapability.promise;
+			this._session.resume(resumeLimit);
+		});
+	}
+
 	private onFirefoxNotification(topic: string, args: any): void {
 		switch (topic) {
 			case 'paused':
+				this._pausedCapability.resolve(args.reason);
 				if (args.reason === 'attached') {
 					if (this._stopOnEntry) {
 						// we stop on the first line
 						this.sendEvent(new StoppedEvent("entry", FirefoxDebugSession.THREAD_ID));
 					} else {
 						// we just start to run until we hit a breakpoint or an exception
-						this._session.resume();
+						this.resume();
 					}
 					return;
 				}
@@ -81,7 +109,13 @@ class FirefoxDebugSession extends DebugSession {
 				this.sendEvent(new StoppedEvent("debugger", FirefoxDebugSession.THREAD_ID));
 				return;
 			case 'source':
-
+				var path = args.path;
+				if (!this._pendingSourceCapabilities[path]) {
+					this._sourcePromises[path] = Promise.resolve(args.id);
+				} else {
+					this._pendingSourceCapabilities[path].resolve(args.id);
+				}
+				return;
 		}
 	}
 
@@ -109,45 +143,64 @@ class FirefoxDebugSession extends DebugSession {
 		this.sendResponse(response);
 	}
 
+	private getSourceId(path: string): Promise<string> {
+		if (this._sourcePromises[path]) {
+			return this._sourcePromises[path];
+		}
+		var capability = new PromiseCapability<string>();
+		this._sourcePromises[path] = capability.promise;
+		this._pendingSourceCapabilities[path] = capability;
+		capability.promise.then((_) => {
+			delete this._pendingSourceCapabilities[path];
+		}, (_) => {
+			delete this._pendingSourceCapabilities[path];
+		});
+		return capability.promise;
+	}
+
 	protected setBreakPointsRequest(response: DebugProtocol.SetBreakpointsResponse, args: DebugProtocol.SetBreakpointsArguments): void {
 
 		var path = args.source.path;
 		var clientLines = args.lines;
-
-		// read file contents into array for direct access
-		var lines = readFileSync(path).toString().split('\n');
-
-		var breakpoints = new Array<Breakpoint>();
-
-		// verify breakpoint locations
-		for (var i = 0; i < clientLines.length; i++) {
-			var l = this.convertClientLineToDebugger(clientLines[i]);
-			var verified = false;
-			if (l < lines.length) {
-				const line = lines[l].trim();
-				// if a line is empty or starts with '+' we don't allow to set a breakpoint but move the breakpoint down
-				if (line.length == 0 || line.indexOf("+") == 0)
-					l++;
-				// if a line starts with '-' we don't allow to set a breakpoint but move the breakpoint up
-				if (line.indexOf("-") == 0)
-					l--;
-				// don't set 'verified' to true if the line contains the word 'lazy'
-				// in this case the breakpoint will be verified 'lazy' after hitting it once.
-				if (line.indexOf("lazy") < 0) {
-					verified = true;    // this breakpoint has been validated
-				}
+		var sourceId;
+		this._resumeAllowedPromise = Promise.all([this.getSourceId(path), this._resumeAllowedPromise]).then((results) => {
+			sourceId = results[0];
+			var oldBreakpointsIds = this._breakPointsIds[path];
+			if (oldBreakpointsIds && oldBreakpointsIds.length > 0) {
+				return this._session.removeBreakpoints(oldBreakpointsIds);
 			}
-			const bp = <DebugProtocol.Breakpoint> new Breakpoint(verified, this.convertDebuggerLineToClient(l));
-			bp.id = this._breakpointId++;
-			breakpoints.push(bp);
-		}
-		this._breakPoints[path] = breakpoints;
+		}).then(() => {
+			var lines = new Array<number>();
+			// verify breakpoint locations
+			for (var i = 0; i < clientLines.length; i++) {
+				var l = this.convertClientLineToDebugger(clientLines[i]);
+				lines.push(l);
+			}
 
-		// send back the actual breakpoint positions
-		response.body = {
-			breakpoints: breakpoints
-		};
-		this.sendResponse(response);
+			return this._session.addBreakpoints(sourceId, lines).then((items) => {
+				var breakpoints = new Array<Breakpoint>();
+				var breakpointsIds = new Array<string>();
+				items.forEach((item) => {
+					var verified = !!item.id;
+					if (verified) {
+						breakpointsIds.push(item.id)
+					}
+					const bp = <DebugProtocol.Breakpoint> new Breakpoint(verified, this.convertDebuggerLineToClient(item.line));
+					bp.id = this._breakpointId++;
+					breakpoints.push(bp);
+				});
+				this._breakPoints[path] = breakpoints;
+				this._breakPointsIds[path] = breakpointsIds;
+
+				return breakpoints;
+			});
+		}).then((breakpoints) => {
+			// send back the actual breakpoint positions
+			response.body = {
+				breakpoints: breakpoints
+			};
+			this.sendResponse(response);
+		});
 	}
 
 	protected threadsRequest(response: DebugProtocol.ThreadsResponse): void {
@@ -216,22 +269,22 @@ class FirefoxDebugSession extends DebugSession {
 	}
 
 	protected continueRequest(response: DebugProtocol.ContinueResponse, args: DebugProtocol.ContinueArguments): void {
-		this._session.resume();
+		this.resume();
 		this.sendResponse(response);
 	}
 
 	protected nextRequest(response: DebugProtocol.NextResponse, args: DebugProtocol.NextArguments): void {
-		this._session.resume('next');
+		this.resume('next');
 		this.sendResponse(response);
 	}
 
 	protected stepInRequest(response: DebugProtocol.StepInResponse, args: DebugProtocol.StepInArguments): void {
-		this._session.resume('step');
+		this.resume('step');
 		this.sendResponse(response);
 	}
 
 	protected stepOutRequest(response: DebugProtocol.StepOutResponse, args: DebugProtocol.StepOutArguments): void {
-		this._session.resume('finish');
+		this.resume('finish');
 		this.sendResponse(response);
 	}
 
@@ -252,6 +305,12 @@ class FirefoxDebugSession extends DebugSession {
 	}
 
 	protected disconnectRequest(response: DebugProtocol.DisconnectResponse, args: DebugProtocol.DisconnectArguments): void {
+		this._pausedCapability.reject('stopping');
+		Object.keys(this._pendingSourceCapabilities).forEach((key) => {
+			if (this._pendingSourceCapabilities[key]) {
+				this._pendingSourceCapabilities.reject('stopping');
+			}
+		});
 		this.sendEvent(new OutputEvent('stopping'));
 
 		this._session.stop();
