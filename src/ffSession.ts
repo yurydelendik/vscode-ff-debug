@@ -475,11 +475,17 @@ class ContextActor extends Actor {
 		}
 	}
 
-	public evaluate(expr: string, frameId?: number): Promise<ResultVariable> {
-		return new Promise<ResultVariable>((resolve, reject) => {
-			this.sendMessage({ "type":"clientEvaluate", "expression":expr, "frame": frameId || 0 });
-			this._evaluateCapabilty = new PromiseCapability<ResultVariable>();
-		});
+	public evaluate(expr: string, frame?: number): Promise<ResultVariable> {
+		if (frame === undefined) frame = 0; // FIXME if undefined, it must be global
+		this._evaluateCapabilty = new PromiseCapability<ResultVariable>();
+		this.sendRequest({type: 'frames', startFrame: frame, count: 1}).then((body) => {
+			return this.sendMessage({
+				"type": "clientEvaluate",
+				"expression": expr,
+				"frame": body.frames[0].actor
+			});
+		}).catch(this._evaluateCapabilty.reject);
+		return this._evaluateCapabilty.promise;
 	}
 
 	public addBreakpoints(sourceId: string, lines: number[]): Promise< Array<{id: string, line: number}> > {
@@ -633,8 +639,8 @@ user_pref("devtools.debugger.remote-enabled", true);
 		return this._protocol.contextActor.getScopes(frame);
 	}
 
-	public evaluate(expr: string, frameId?: number): Promise<ResultVariable> {
-		return this._protocol.contextActor.evaluate(expr, frameId);
+	public evaluate(expr: string, frame?: number): Promise<ResultVariable> {
+		return this._protocol.contextActor.evaluate(expr, frame);
 	}
 
 	public getVariables(refId: string): Promise< Array<{name: string, value: ResultVariable}> > {
