@@ -308,13 +308,24 @@ class ContextActor extends Actor {
 
 	private formatGrip(value: any): string {
 		if (typeof value !== 'object' || value === null) {
-			return '' + value;
+			return JSON.stringify(value);
 		}
-		return `[${value.class}]`; // TODO
+		switch (value.type) {
+			case 'null':
+			case 'undefined':
+			case 'Infinity':
+			case '-Infinity':
+			case 'NaN':
+			case '-0':
+				return value.type;
+			case 'longString':
+				return value.initial; // TODO
+		}
+		return `[object ${value.class}]`;
 	}
 
 	private getActor(value: any): string {
-		return typeof value === 'object' && value !== null ?
+		return typeof value === 'object' && value !== null && value.type === 'object' ?
 			value.actor : undefined;
 	}
 
