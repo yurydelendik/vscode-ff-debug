@@ -216,7 +216,7 @@ class FirefoxDebugSession extends DebugSession {
 
 	protected stackTraceRequest(response: DebugProtocol.StackTraceResponse, args: DebugProtocol.StackTraceArguments): void {
 		this._session.getStackTrace((<any>args).startFrame, args.levels).then(
-			  (stack: Array<{name: string, source: string, line: number}>) => {
+				(stack: Array<{name: string, source: string, line: number}>) => {
 			const frames = new Array<StackFrame>();
 			stack.forEach((f: {name: string, source: string, line: number}, index: number) => {
 				var path = this.convertDebuggerPathToClient(f.source);
@@ -296,7 +296,7 @@ class FirefoxDebugSession extends DebugSession {
 			};
 			this.sendResponse(response);
 		}, (reason) => {
-      response.body = {
+			response.body = {
 				result: 'eval error: ' + reason,
 				variablesReference: 0
 			};
