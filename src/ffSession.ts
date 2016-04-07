@@ -10,6 +10,13 @@ import * as fs from 'fs';
 const DefaultPort: number = 9223;
 const EnvironmentVariablesPrefix = 'env!';
 
+export class ActorError extends Error {
+	public body;
+	public constructor(message, body) {
+		super(message);
+		this.body = body;
+	}
+}
 
 export interface ResultVariable {
 	display: string;
@@ -32,6 +39,7 @@ class FirefoxProtocolImpl extends FirefoxProtocol {
 	private _session: FirefoxSession;
 	public contextActor: ContextActor;
 	public urlHelper: IURLHelper;
+	public logEnabled: boolean;
 
 	private _map: Map<string, Actor>;
 
@@ -40,6 +48,7 @@ class FirefoxProtocolImpl extends FirefoxProtocol {
 		this._session = session;
 		this.urlHelper = urlHelper;
 		this._map = Object.create(null);
+		this.logEnabled = false;
 		this.addActor(new RootActor('root', this, program));
 	}
 
@@ -66,7 +75,14 @@ class FirefoxProtocolImpl extends FirefoxProtocol {
 		this.sendResponse(body);
 	}
 
-	public log(s: string, category?: string): void {
+	public log(s: string): void {
+		if (!this.logEnabled) {
+			return;
+		}
+		this._session._onOutput(s);
+	}
+
+	public print(s: string, category: string): void {
 		this._session._onOutput(s, category);
 	}
 
@@ -86,12 +102,12 @@ class ActorRequest {
 		return this._capability.promise;
 	}
 
-	public respond(response: any): void  {
-		if (!response.error) {
-			this._capability.resolve(response);
-		} else {
-			this._capability.reject(new Error(response.error + ': ' + JSON.stringify(response)));
-		}
+	public respond(response: any): void {
+		this._capability.resolve(response);
+	}
+
+	public fail(response: any): void {
+		this._capability.reject(new ActorError('Actor error', response));
 	}
 }
 
@@ -130,26 +146,35 @@ class Actor {
 		return this.processResponse(body);
 	}
 
-	protected processResponse(body: any): boolean {
-		if (!this._processing) {
-			return false;
-		}
-		this._processing.respond(body);
+	private sendNext(): void {
 		if (this._queue.length > 0) {
 			this._processing = this._queue.shift();
 			this.protocol.relayResponse(this._processing.body);
 		} else {
 			this._processing = null;
 		}
+	}
+
+	protected processResponse(body: any): boolean {
+		if (!this._processing) {
+			return false;
+		}
+		this._processing.respond(body);
+		this.sendNext();
 		return true;
 	}
 
-	protected processNotification(body: any): boolean  {
+	protected processNotification(body: any): boolean {
 		return false;
 	}
 
 	protected processError(body: any): boolean {
-		return false;
+		if (!this._processing) {
+			return false;
+		}
+		this._processing.fail(body);
+		this.sendNext();
+		return true;
 	}
 
 	public sendRequest(body: any): Promise<any>  {
@@ -164,7 +189,8 @@ class Actor {
 			this.protocol.relayResponse(request.body);
 		}
 		return request.promise.catch((e) => {
-			this.log('ERR:' + e);
+			var msg = e.message + (e instanceof ActorError ? ',' + JSON.stringify(e.body) : '');
+			this.log('sendRequest failed:' + msg);
 			throw e;
 		});
 	}
@@ -261,7 +287,7 @@ class ConsoleActor extends Actor {
 	private printMessage(message: any, type: string): void {
 		var category = message.level === 'error' ? 'stderr' :
 			message.level === 'warning' ? 'console' : 'stdout';
-		this.protocol.log(message.arguments.join(','), category);
+		this.protocol.print(message.arguments.join(','), category);
 	}
 }
 
@@ -384,9 +410,8 @@ class ContextActor extends Actor {
 					return true;
 				}
 				return false;
-			default:
-				return false;
 		}
+		return super.processError(body);
 	}
 
 	public resume(reason?: string): void {
@@ -585,7 +610,7 @@ user_pref("devtools.debugger.remote-enabled", true);
 	}
 
 	public launch(args: {runtimeExecutable?: string; port?: number; program: string;
-											 profileDir?: string, webRoot?: string}): void {
+											 profileDir?: string, webRoot?: string, logEnabled?: boolean}): void {
 		var url: string = args.program;
 		var urlHelper: IURLHelper;
 		if (url.indexOf('://') < 0) {
@@ -613,6 +638,7 @@ user_pref("devtools.debugger.remote-enabled", true);
 			});
 		}
 		this.attach(port, url, urlHelper);
+		this._protocol.logEnabled = !!args.logEnabled;
 	}
 
 	public attach(port: number, program: string, urlHelper: IURLHelper): void {

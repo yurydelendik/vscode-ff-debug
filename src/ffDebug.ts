@@ -24,6 +24,7 @@ export interface LaunchRequestArguments {
 	runtimeExecutable?: string;
 	port?: number;
 	profileDir?: string;
+	logEnabled?: boolean;
 }
 
 class PromiseCapability<T> {
@@ -240,6 +241,7 @@ class FirefoxDebugSession extends DebugSession {
 		this._session.getScopes(frameReference).then((items) => {
 			const scopes = new Array<Scope>();
 			items.forEach((item) => {
+
 				scopes.push(new Scope(item.type, this._variableHandles.create(item.id), item.type === 'Global'));
 			});
 
@@ -263,6 +265,11 @@ class FirefoxDebugSession extends DebugSession {
 			});
 			response.body = {
 				variables: variables
+			};
+			this.sendResponse(response);
+		}).catch(_ => {
+			response.body = {
+				variables: []
 			};
 			this.sendResponse(response);
 		});
