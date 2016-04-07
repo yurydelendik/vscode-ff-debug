@@ -64,33 +64,33 @@ In experimental env:
 
 ```
 {
-	"version": "0.2.0",
-	"configurations": [
-		{
-			"name": "Firefox-Debug",
-			"type": "firefox",
-			"request": "launch",
-            "runtimeExecutable": "/Applications/FirefoxDeveloperEdition.app/Contents/MacOS/firefox",
-            "port": 6000,
-			"program": "${workspaceRoot}/index.html",
-            "profileDir": "${workspaceRoot}/.firefoxProfile",
-			"stopOnEntry": true
-		},
-		{
-			"name": "Firefox-Debug-HTTP",
-			"type": "firefox",
-			"request": "launch",
-            "runtimeExecutable": "/Applications/FirefoxDeveloperEdition.app/Contents/MacOS/firefox",
-            "port": 6001,
-			"program": "http://localhost:8000/index.html",
-            "webRoot": "${workspaceRoot}",
-            "profileDir": "${workspaceRoot}/.firefoxProfile",
-			"stopOnEntry": true
-		}
- 	]
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Firefox-Debug",
+      "type": "firefox",
+      "request": "launch",
+      "runtimeExecutable": "/Applications/FirefoxDeveloperEdition.app/Contents/MacOS/firefox",
+      "port": 6000,
+      "program": "${workspaceRoot}/index.html",
+      "profileDir": "${workspaceRoot}/.firefoxProfile",
+      "stopOnEntry": false
+    },
+    {
+      "name": "Firefox-Debug-HTTP",
+      "type": "firefox",
+      "request": "launch",
+      "runtimeExecutable": "/Applications/FirefoxDeveloperEdition.app/Contents/MacOS/firefox",
+      "port": 6001,
+      "program": "http://localhost:8000/index.html",
+      "webRoot": "${workspaceRoot}",
+      "profileDir": "${workspaceRoot}/.firefoxProfile",
+      "stopOnEntry": false
+    }
+   ]
 }
 ```
 
 * Hit debug icon
 * Run 'Firefox-Debug'
-* Allow debugger connection
+* Allow debugger connection (it is about 5 seconds).
